@@ -6,6 +6,9 @@
   <title>Australia LNG Map</title>
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <!-- MarkerCluster CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <style>
     html, body { height: 100%; margin: 0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
@@ -19,11 +22,6 @@
 
     #map { width: 100%; height: 100%; }
 
-    /* Info panel */
-    .panel { position: absolute; right: 12px; top: 64px; width: 320px; max-width: 70vw; background: #fff; border: 1px solid #eee; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.08); padding: 12px; z-index: 600; }
-    .panel h3 { margin: 0 0 6px; font-size: 16px; }
-    .panel small { color: #666; }
-
     /* Leaflet popup tweaks */
     .leaflet-popup-content-wrapper { border-radius: 12px; }
     .popup-card { display: grid; grid-template-columns: 36px 1fr; gap: 10px; align-items: start; }
@@ -34,8 +32,6 @@
     .legend { position: absolute; left: 12px; bottom: 16px; background: #fff; border: 1px solid #eee; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.08); padding: 8px 10px; z-index: 600; font-size: 12px; }
     .legend-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
     .legend-swatch { width: 12px; height: 12px; border-radius: 2px; }
-    .legend .active { background: #d32f2f; }
-    .legend .planned { background: repeating-linear-gradient(45deg, #ff9800, #ff9800 4px, #fff 4px, #fff 8px); border: 1px solid #ff9800; }
 
     /* Small helper */
     .hint { color: #666; font-size: 12px; }
@@ -47,18 +43,29 @@
       <h1>Australia LNG Map</h1>
       <div class="field">
         <label>Plants CSV:</label>
-        <input id="plantsUrl" placeholder="https://docs.google.com/spreadsheets/d/e/2PACX-1vTI487GkKkLgbKgU0SRUtHwa-eaaMscS9wg1c99RoPI3EHtPOtrzAZZJW_qIyVOA2iOxwJMs5Zn2jl-/pub?gid=0&single=true&output=csv" />
+        <input id="plantsUrl" placeholder="https://docs.google.com/...&output=csv" />
       </div>
       <div class="field">
         <label>Fields CSV:</label>
-        <input id="fieldsUrl" placeholder="https://docs.google.com/spreadsheets/d/e/2PACX-1vTI487GkKkLgbKgU0SRUtHwa-eaaMscS9wg1c99RoPI3EHtPOtrzAZZJW_qIyVOA2iOxwJMs5Zn2jl-/pub?gid=1758762121&single=true&output=csv" />
+        <input id="fieldsUrl" placeholder="https://docs.google.com/...&output=csv" />
       </div>
       <div class="field">
         <label>Pipelines CSV:</label>
-        <input id="pipesUrl" placeholder="https://docs.google.com/spreadsheets/d/e/2PACX-1vTI487GkKkLgbKgU0SRUtHwa-eaaMscS9wg1c99RoPI3EHtPOtrzAZZJW_qIyVOA2iOxwJMs5Zn2jl-/pub?gid=1041396124&single=true&output=csv" />
+        <input id="pipesUrl" placeholder="https://docs.google.com/...&output=csv" />
       </div>
       <button id="loadBtn">Load / Refresh</button>
       <span class="hint">Paste your published Google Sheets CSV links, then click Load.</span>
+      <!-- Filters -->
+      <div class="field">
+        <label>Operator filter:</label>
+        <input id="operatorFilter" placeholder="e.g. Santos, Shell, Origin" />
+      </div>
+      <div class="field" style="gap:4px">
+        <label>Status:</label>
+        <label><input type="checkbox" id="statusActive" checked /> Active</label>
+        <label><input type="checkbox" id="statusPlanned" checked /> Planned</label>
+        <label><input type="checkbox" id="statusInactive" checked /> Inactive</label>
+      </div>
     </header>
     <div id="map"></div>
   </div>
@@ -66,10 +73,11 @@
   <!-- Libraries -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <!-- MarkerCluster JS -->
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <script>
     // ======== CONFIG (optional defaults) ========
-    // You can hardcode defaults here to avoid pasting every time
     const DEFAULT_PLANTS_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTI487GkKkLgbKgU0SRUtHwa-eaaMscS9wg1c99RoPI3EHtPOtrzAZZJW_qIyVOA2iOxwJMs5Zn2jl-/pub?gid=0&single=true&output=csv';
     const DEFAULT_FIELDS_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTI487GkKkLgbKgU0SRUtHwa-eaaMscS9wg1c99RoPI3EHtPOtrzAZZJW_qIyVOA2iOxwJMs5Zn2jl-/pub?gid=1758762121&single=true&output=csv';
     const DEFAULT_PIPES_CSV  = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTI487GkKkLgbKgU0SRUtHwa-eaaMscS9wg1c99RoPI3EHtPOtrzAZZJW_qIyVOA2iOxwJMs5Zn2jl-/pub?gid=1041396124&single=true&output=csv';
@@ -80,8 +88,9 @@
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // Feature groups for easy clearing/reload
-    const layerPlants = L.featureGroup().addTo(map);
+    // Marker clustering for plants (avoid overlap). Spiderfy draws thin lines back to original point.
+    const layerPlants = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 60, spiderfyOnMaxZoom: true });
+    layerPlants.addTo(map);
     const layerFields = L.featureGroup().addTo(map);
     const layerPipes  = L.featureGroup().addTo(map);
 
@@ -90,16 +99,20 @@
     legend.onAdd = function() {
       const div = L.DomUtil.create('div', 'legend');
       div.innerHTML = `
-        <div class="legend-row"><span class="legend-swatch active"></span> Active pipeline</div>
-        <div class="legend-row"><span class="legend-swatch planned"></span> Planned pipeline</div>
-        <div class="legend-row"><span style="width:12px;height:12px;border:1px solid #333;border-radius:50%;display:inline-block"></span> Field</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#2e7d32"></span> Active pipeline</div>
+        <div class="legend-row"><span class="legend-swatch" style="background: repeating-linear-gradient(45deg, #ff9800, #ff9800 4px, #fff 4px, #fff 8px); border:1px solid #ff9800;"></span> Planned pipeline</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#9e9e9e;opacity:0.6;border:1px dashed #9e9e9e"></span> Inactive pipeline</div>
+        <hr style="border:none;border-top:1px solid #eee;margin:6px 0;"/>
+        <div class="legend-row"><span class="legend-swatch" style="background:#2e7d32"></span> Field (Active)</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#ffb300"></span> Field (Planned)</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#9e9e9e"></span> Field (Inactive)</div>
         <div class="legend-row"><span style="width:14px;height:14px;border:1px solid #333;display:inline-block;background:#fff"></span> Plant (logo)</div>
       `;
       return div;
     };
     legend.addTo(map);
 
-    // Helper: fetch & parse CSV via Papa
+    // Helpers
     async function fetchCSV(url) {
       if (!url) return [];
       return new Promise((resolve, reject) => {
@@ -113,7 +126,6 @@
       });
     }
 
-    // Helper: tiny templating for plant popup
     function plantPopup(row) {
       const cap = row.total_capacity_mtpa || row.total_capacity || row.capacity || '';
       const trains = row.train_count || '';
@@ -139,17 +151,12 @@
       `;
     }
 
-    // Helper: parse coords string like "[-26.7,150.95];[-26.5,151.3]"
     function parseCoords(str) {
       if (!str) return null;
       try {
-        // split by ; then JSON.parse each bracket pair
         return str.split(';').map(s => {
           const t = s.trim();
-          // ensure valid JSON by replacing single quotes etc.
-          const j = t.replace(/(\w+):/g, '"$1":');
-          const arr = JSON.parse(j);
-          // Leaflet expects [lat, lon]
+          const arr = JSON.parse(t);
           return [Number(arr[0]), Number(arr[1])];
         }).filter(p => !isNaN(p[0]) && !isNaN(p[1]));
       } catch (e) {
@@ -159,7 +166,6 @@
     }
 
     function makePlantIcon(logoUrl) {
-      // Fallback to simple div icon if no logo
       if (!logoUrl) {
         return L.divIcon({
           className: 'plant-icon',
@@ -173,16 +179,28 @@
 
     function statusStyle(status) {
       const s = (status || '').toLowerCase();
-      if (s.includes('plan') || s.includes('construct')) {
+      if (s.includes('inactive') || s.includes('decommission') || s.includes('retired') || s.includes('suspend')) {
+        return { color: '#9e9e9e', weight: 2, dashArray: '4 6', opacity: 0.6 };
+      }
+      if (s.includes('plan') || s.includes('construct') || s.includes('proposed')) {
         return { color: '#ff9800', weight: 2, dashArray: '6 6' };
       }
-      return { color: '#d32f2f', weight: 3 };
+      return { color: '#2e7d32', weight: 3 }; // Active → green
     }
 
     function clearLayers() {
       layerPlants.clearLayers();
       layerFields.clearLayers();
       layerPipes.clearLayers();
+    }
+
+    function getFilters() {
+      const ops = (document.getElementById('operatorFilter')?.value || '').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+      const opSet = new Set(ops);
+      const fActive = document.getElementById('statusActive')?.checked !== false;
+      const fPlanned = document.getElementById('statusPlanned')?.checked !== false;
+      const fInactive = document.getElementById('statusInactive')?.checked !== false;
+      return { opSet, status: { active: fActive, planned: fPlanned, inactive: fInactive } };
     }
 
     async function loadData(plantsUrl, fieldsUrl, pipesUrl) {
@@ -194,7 +212,6 @@
         fetchCSV(pipesUrl)
       ]);
 
-      // index for lookup by id
       const plantById = new Map();
       const fieldById = new Map();
 
@@ -203,10 +220,14 @@
       (plants || []).forEach(row => {
         const lat = Number(row.lat); const lon = Number(row.lon);
         if (isNaN(lat) || isNaN(lon)) return;
-        plantById.set((row.plant_id || row.id || row.plant_name || '').trim(), row);
+        const key = (row.plant_id || row.id || row.plant_name || '').trim();
+        const filters = getFilters();
+        const op = (row.operator || '').toLowerCase();
+        if (filters.opSet.size && !filters.opSet.has(op)) return;
+        if (key) plantById.set(key, row);
         const icon = makePlantIcon(row.operator_logo_url);
         const m = L.marker([lat, lon], { icon }).bindPopup(plantPopup(row));
-        m.addTo(layerPlants);
+        layerPlants.addLayer(m);
         plantMarkers.push(m);
       });
 
@@ -218,9 +239,16 @@
         const key = (row.field_id || row.id || row.field_name || '').trim();
         if (key) fieldById.set(key, row);
 
+        const filters = getFilters();
         const statusRaw = (row.status || '').toLowerCase();
         const isInactive = statusRaw.includes('inactive') || statusRaw.includes('decommission') || statusRaw.includes('retired') || statusRaw.includes('suspend');
         const isPlanned  = statusRaw.includes('plan') || statusRaw.includes('proposed') || statusRaw.includes('construct');
+        if (isInactive && !filters.status.inactive) return;
+        if (isPlanned && !filters.status.planned) return;
+        if (!isInactive && !isPlanned && !filters.status.active) return;
+        const op = (row.operator || '').toLowerCase();
+        if (filters.opSet.size && !filters.opSet.has(op)) return;
+
         const endYear = (row.end_year || '').toString().trim();
         const plannedYear = (row.planned_year || '').toString().trim();
 
@@ -246,10 +274,18 @@
       // Pipelines
       const pipeShapes = [];
       (pipes || []).forEach(row => {
+        const status = (row.status || '').toLowerCase();
+        const isInactive = status.includes('inactive') || status.includes('decommission') || status.includes('retired') || status.includes('suspend');
+        const isPlanned  = status.includes('plan') || status.includes('construct') || status.includes('proposed');
+        const filters = getFilters();
+        if (isInactive && !filters.status.inactive) return;
+        if (isPlanned && !filters.status.planned) return;
+        if (!isInactive && !isPlanned && !filters.status.active) return;
+
         const coordsStr = row.coords && row.coords.trim();
         let latlngs = parseCoords(coordsStr);
 
-        // Fallback: draw straight line from from_id to to_id
+        // Fallback: straight line from from_id to to_id
         if ((!latlngs || latlngs.length < 2) && row.from_type && row.to_type) {
           const fromId = (row.from_id || '').trim();
           const toId   = (row.to_id || '').trim();
@@ -268,33 +304,24 @@
           const style = statusStyle(row.status);
           const endYear = (row.end_year || row.end_date || '').toString().trim();
           const plannedYear = (row.planned_year || '').toString().trim();
-          const extra = isInactive && endYear
-            ? `<br/>Inactive since: ${endYear}`
-            : (!isInactive && plannedYear ? `<br/>Planned year: ${plannedYear}` : '');
-
+          const extra = isInactive && endYear ? `<br/>Inactive since: ${endYear}` : (!isInactive && plannedYear ? `<br/>Planned year: ${plannedYear}` : '');
           const title = row.pipeline_name || row.pipeline_id || 'Pipeline';
-          const hover = `${title}` + (isInactive && endYear
-            ? ` — Inactive since ${endYear}`
-            : (!isInactive && plannedYear ? ` — Planned ${plannedYear}` : ''));
-
+          const hover = `${title}` + (isInactive && endYear ? ` — Inactive since ${endYear}` : (!isInactive && plannedYear ? ` — Planned ${plannedYear}` : ''));
           const line = L.polyline(latlngs, style)
-            .bindPopup(
-              `<b>${title}</b><br/>Status: ${row.status || '-'}${extra}<br/>From: ${(row.from_type||'')}:${(row.from_id||'')} → To: ${(row.to_type||'')}:${(row.to_id||'')}`
-            )
+            .bindPopup(`<b>${title}</b><br/>Status: ${row.status || '-'}${extra}<br/>From: ${(row.from_type||'')}:${(row.from_id||'')} → To: ${(row.to_type||'')}:${(row.to_id||'')}`)
             .bindTooltip(hover, { direction: 'top', sticky: true, opacity: 0.9 });
-
           line.addTo(layerPipes);
           pipeShapes.push(line);
         }
       });
 
-      // Fit bounds to everything that exists
+      // Fit bounds
       const all = L.featureGroup([...plantMarkers, ...fieldMarkers, ...pipeShapes]);
       if (all.getLayers().length) {
         map.fitBounds(all.getBounds().pad(0.2));
       }
 
-      // layer control
+      // Layer control
       const base = { 'OpenStreetMap': osm };
       const overlays = { 'Plants (logos)': layerPlants, 'Fields': layerFields, 'Pipelines': layerPipes };
       if (!window._layerCtl) {
@@ -307,25 +334,34 @@
     const fieldsUrlInput = document.getElementById('fieldsUrl');
     const pipesUrlInput  = document.getElementById('pipesUrl');
     const loadBtn = document.getElementById('loadBtn');
+    const operatorFilterInput = document.getElementById('operatorFilter');
+    const statusActiveInput = document.getElementById('statusActive');
+    const statusPlannedInput = document.getElementById('statusPlanned');
+    const statusInactiveInput = document.getElementById('statusInactive');
 
-    // Prefill from defaults if provided
+    let _lastUrls = { p1: '', p2: '', p3: '' };
+
     plantsUrlInput.value = DEFAULT_PLANTS_CSV;
     fieldsUrlInput.value = DEFAULT_FIELDS_CSV;
     pipesUrlInput.value  = DEFAULT_PIPES_CSV;
 
-    loadBtn.addEventListener('click', () => {
+    function doLoad() {
       const p1 = plantsUrlInput.value.trim();
       const p2 = fieldsUrlInput.value.trim();
       const p3 = pipesUrlInput.value.trim();
-      if (!p1 || !p2 || !p3) {
-        alert('Please paste all three CSV URLs.');
-        return;
-      }
+      if (!p1 || !p2 || !p3) { alert('Please paste all three CSV URLs.'); return; }
+      _lastUrls = { p1, p2, p3 };
       loadData(p1, p2, p3);
-    });
+    }
 
-    // If defaults are set, auto-load once
+    loadBtn.addEventListener('click', doLoad);
+    operatorFilterInput && operatorFilterInput.addEventListener('input', () => { if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3); });
+    statusActiveInput && statusActiveInput.addEventListener('change', () => { if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3); });
+    statusPlannedInput && statusPlannedInput.addEventListener('change', () => { if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3); });
+    statusInactiveInput && statusInactiveInput.addEventListener('change', () => { if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3); });
+
     if (DEFAULT_PLANTS_CSV && DEFAULT_FIELDS_CSV && DEFAULT_PIPES_CSV) {
+      _lastUrls = { p1: DEFAULT_PLANTS_CSV, p2: DEFAULT_FIELDS_CSV, p3: DEFAULT_PIPES_CSV };
       loadData(DEFAULT_PLANTS_CSV, DEFAULT_FIELDS_CSV, DEFAULT_PIPES_CSV);
     }
   </script>
