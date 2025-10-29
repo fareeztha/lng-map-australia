@@ -35,7 +35,14 @@
 
     /* Small helper */
     .hint { color: #666; font-size: 12px; }
-  </style>
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.25);display:none;align-items:center;justify-content:center;z-index:1000}
+    .modal{width:520px;max-width:90vw;background:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);border:1px solid #eee}
+    .modal header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #eee}
+    .modal .content{padding:12px 14px;max-height:60vh;overflow:auto}
+    .modal .actions{padding:10px 14px;border-top:1px solid #eee;display:flex;gap:8px;justify-content:flex-end}
+    .chips{display:flex;flex-wrap:wrap;gap:6px}
+    .chip{padding:4px 8px;border:1px solid #ddd;border-radius:999px;font-size:12px;background:#fafafa}
+    </style>
 </head>
 <body>
   <div id="app">
@@ -55,19 +62,52 @@
       </div>
       <button id="loadBtn">Load / Refresh</button>
       <span class="hint">Paste your published Google Sheets CSV links, then click Load.</span>
-      <!-- Filters -->
+      
+      <!-- Filter triggers -->
       <div class="field">
-        <label>Operator filter:</label>
-        <input id="operatorFilter" placeholder="e.g. Santos, Shell, Origin" />
-      </div>
-      <div class="field" style="gap:4px">
-        <label>Status:</label>
-        <label><input type="checkbox" id="statusActive" checked /> Active</label>
-        <label><input type="checkbox" id="statusPlanned" checked /> Planned</label>
-        <label><input type="checkbox" id="statusInactive" checked /> Inactive</label>
+        <button id="btnFilterOperator">Filter: Operator <span id="badgeOps" class="badge" style="margin-left:4px">All</span></button>
+        <button id="btnFilterStatus">Filter: Status <span id="badgeStatus" class="badge" style="margin-left:4px">All</span></button>
       </div>
     </header>
     <div id="map"></div>
+
+    <!-- Operator Modal -->
+    <div id="opsModal" class="modal-backdrop">
+      <div class="modal">
+        <header>
+          <h3 style="margin:0">Filter — Operator</h3>
+          <button id="opsClose">✕</button>
+        </header>
+        <div class="content">
+          <div style="margin-bottom:8px;display:flex;gap:8px">
+            <button id="opsSelectAll">Select all</button>
+            <button id="opsClear">Clear</button>
+          </div>
+          <div id="opsList" class="chips"></div>
+        </div>
+        <div class="actions">
+          <button id="opsApply">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Modal -->
+    <div id="statusModal" class="modal-backdrop">
+      <div class="modal">
+        <header>
+          <h3 style="margin:0">Filter — Status</h3>
+          <button id="statusClose">✕</button>
+        </header>
+        <div class="content">
+          <label style="display:block;margin-bottom:6px"><input type="checkbox" id="fActive" checked> Active</label>
+          <label style="display:block;margin-bottom:6px"><input type="checkbox" id="fPlanned" checked> Planned</label>
+          <label style="display:block"><input type="checkbox" id="fInactive" checked> Inactive</label>
+        </div>
+        <div class="actions">
+          <button id="statusApply">Apply</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Libraries -->
@@ -83,13 +123,13 @@
     const DEFAULT_PIPES_CSV  = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTI487GkKkLgbKgU0SRUtHwa-eaaMscS9wg1c99RoPI3EHtPOtrzAZZJW_qIyVOA2iOxwJMs5Zn2jl-/pub?gid=1041396124&single=true&output=csv';
 
     // ======== Map bootstrap ========
-    const map = L.map('map', { zoomControl: true, minZoom: 2 }).setView([-25.0, 133.0], 4);
+    const map = L.map('map', { zoomControl: true, minZoom: 2, preferCanvas: true }).setView([-25.0, 133.0], 4);
     const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
     // Marker clustering for plants (avoid overlap). Spiderfy draws thin lines back to original point.
-    const layerPlants = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 60, spiderfyOnMaxZoom: true });
+    const layerPlants = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 60, spiderfyOnMaxZoom: true, removeOutsideVisibleBounds: true, animateAddingMarkers: false });
     layerPlants.addTo(map);
     const layerFields = L.featureGroup().addTo(map);
     const layerPipes  = L.featureGroup().addTo(map);
@@ -194,6 +234,21 @@
       layerPipes.clearLayers();
     }
 
+    // Global filter state
+    const filterState = {
+      operators: new Set(), // lowercase
+      status: { active: true, planned: true, inactive: true },
+    };
+
+    function setBadgeCounts() {
+      const bOps = document.getElementById('badgeOps');
+      bOps.textContent = filterState.operators.size ? `${filterState.operators.size} selected` : 'All';
+      const bSt = document.getElementById('badgeStatus');
+      const s = filterState.status;
+      const cnt = (s.active?1:0)+(s.planned?1:0)+(s.inactive?1:0);
+      bSt.textContent = cnt===3 || cnt===0 ? 'All' : `${cnt} selected`;
+    }
+
     function getFilters() {
       const ops = (document.getElementById('operatorFilter')?.value || '').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
       const opSet = new Set(ops);
@@ -215,16 +270,24 @@
       const plantById = new Map();
       const fieldById = new Map();
 
+      // Build operator list from both Plants and Fields (once per load)
+      const allOps = new Set();
+      (plants||[]).forEach(r=>{ const v=(r.operator||'').trim(); if(v) allOps.add(v);});
+      (fields||[]).forEach(r=>{ const v=(r.operator||'').trim(); if(v) allOps.add(v);});
+      buildOperatorModal(Array.from(allOps).sort());
+
       // Plants
       const plantMarkers = [];
+      const addedPlantIds = new Set();
       (plants || []).forEach(row => {
         const lat = Number(row.lat); const lon = Number(row.lon);
         if (isNaN(lat) || isNaN(lon)) return;
         const key = (row.plant_id || row.id || row.plant_name || '').trim();
-        const filters = getFilters();
+        if (!key || addedPlantIds.has(key)) return; // dedupe
         const op = (row.operator || '').toLowerCase();
-        if (filters.opSet.size && !filters.opSet.has(op)) return;
-        if (key) plantById.set(key, row);
+        if (filterState.operators.size && !filterState.operators.has(op)) return; // operator filter
+        plantById.set(key, row);
+        addedPlantIds.add(key);
         const icon = makePlantIcon(row.operator_logo_url);
         const m = L.marker([lat, lon], { icon }).bindPopup(plantPopup(row));
         layerPlants.addLayer(m);
@@ -239,15 +302,9 @@
         const key = (row.field_id || row.id || row.field_name || '').trim();
         if (key) fieldById.set(key, row);
 
-        const filters = getFilters();
-        const statusRaw = (row.status || '').toLowerCase();
-        const isInactive = statusRaw.includes('inactive') || statusRaw.includes('decommission') || statusRaw.includes('retired') || statusRaw.includes('suspend');
-        const isPlanned  = statusRaw.includes('plan') || statusRaw.includes('proposed') || statusRaw.includes('construct');
-        if (isInactive && !filters.status.inactive) return;
-        if (isPlanned && !filters.status.planned) return;
-        if (!isInactive && !isPlanned && !filters.status.active) return;
+        // operator filter for fields
         const op = (row.operator || '').toLowerCase();
-        if (filters.opSet.size && !filters.opSet.has(op)) return;
+        if (filterState.operators.size && !filterState.operators.has(op)) return;
 
         const endYear = (row.end_year || '').toString().trim();
         const plannedYear = (row.planned_year || '').toString().trim();
@@ -277,10 +334,10 @@
         const status = (row.status || '').toLowerCase();
         const isInactive = status.includes('inactive') || status.includes('decommission') || status.includes('retired') || status.includes('suspend');
         const isPlanned  = status.includes('plan') || status.includes('construct') || status.includes('proposed');
-        const filters = getFilters();
-        if (isInactive && !filters.status.inactive) return;
-        if (isPlanned && !filters.status.planned) return;
-        if (!isInactive && !isPlanned && !filters.status.active) return;
+        
+        if (isInactive && !filterState.status.inactive) return;
+        if (isPlanned && !filterState.status.planned) return;
+        if (!isInactive && !isPlanned && !filterState.status.active) return;
 
         const coordsStr = row.coords && row.coords.trim();
         let latlngs = parseCoords(coordsStr);
@@ -334,10 +391,71 @@
     const fieldsUrlInput = document.getElementById('fieldsUrl');
     const pipesUrlInput  = document.getElementById('pipesUrl');
     const loadBtn = document.getElementById('loadBtn');
-    const operatorFilterInput = document.getElementById('operatorFilter');
-    const statusActiveInput = document.getElementById('statusActive');
-    const statusPlannedInput = document.getElementById('statusPlanned');
-    const statusInactiveInput = document.getElementById('statusInactive');
+
+    // Filter modals elements
+    const btnFilterOperator = document.getElementById('btnFilterOperator');
+    const btnFilterStatus = document.getElementById('btnFilterStatus');
+    const opsModal = document.getElementById('opsModal');
+    const opsClose = document.getElementById('opsClose');
+    const opsApply = document.getElementById('opsApply');
+    const opsSelectAll = document.getElementById('opsSelectAll');
+    const opsClear = document.getElementById('opsClear');
+    const opsList = document.getElementById('opsList');
+
+    const statusModal = document.getElementById('statusModal');
+    const statusClose = document.getElementById('statusClose');
+    const statusApply = document.getElementById('statusApply');
+    const fActive = document.getElementById('fActive');
+    const fPlanned = document.getElementById('fPlanned');
+    const fInactive = document.getElementById('fInactive');
+
+    function show(el){ el.style.display = 'flex'; }
+    function hide(el){ el.style.display = 'none'; }
+
+    function buildOperatorModal(operators){
+      // keep previous selection if possible
+      const prev = new Set(filterState.operators);
+      opsList.innerHTML = '';
+      operators.forEach(op => {
+        const key = op.toLowerCase();
+        const id = 'op_'+key.replace(/[^a-z0-9]+/g,'_');
+        const wrap = document.createElement('label');
+        wrap.className = 'chip';
+        wrap.innerHTML = `<input type="checkbox" id="${id}"> ${op}`;
+        const input = wrap.querySelector('input');
+        if (!prev.size || prev.has(key)) input.checked = true; // default all on if no selection
+        input.dataset.key = key;
+        opsList.appendChild(wrap);
+      });
+      setBadgeCounts();
+    }
+
+    btnFilterOperator.addEventListener('click', ()=> show(opsModal));
+    opsClose.addEventListener('click', ()=> hide(opsModal));
+    opsSelectAll.addEventListener('click', ()=> { opsList.querySelectorAll('input').forEach(i=> i.checked = true); });
+    opsClear.addEventListener('click', ()=> { opsList.querySelectorAll('input').forEach(i=> i.checked = false); });
+    opsApply.addEventListener('click', ()=>{
+      const sel = new Set();
+      opsList.querySelectorAll('input:checked').forEach(i=> sel.add(i.dataset.key));
+      filterState.operators = sel; // empty => All
+      setBadgeCounts();
+      hide(opsModal);
+      if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3);
+    });
+
+    btnFilterStatus.addEventListener('click', ()=>{
+      fActive.checked = filterState.status.active;
+      fPlanned.checked = filterState.status.planned;
+      fInactive.checked = filterState.status.inactive;
+      show(statusModal);
+    });
+    statusClose.addEventListener('click', ()=> hide(statusModal));
+    statusApply.addEventListener('click', ()=>{
+      filterState.status = { active: fActive.checked, planned: fPlanned.checked, inactive: fInactive.checked };
+      setBadgeCounts();
+      hide(statusModal);
+      if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3);
+    });
 
     let _lastUrls = { p1: '', p2: '', p3: '' };
 
@@ -355,13 +473,11 @@
     }
 
     loadBtn.addEventListener('click', doLoad);
-    operatorFilterInput && operatorFilterInput.addEventListener('input', () => { if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3); });
-    statusActiveInput && statusActiveInput.addEventListener('change', () => { if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3); });
-    statusPlannedInput && statusPlannedInput.addEventListener('change', () => { if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3); });
-    statusInactiveInput && statusInactiveInput.addEventListener('change', () => { if (_lastUrls.p1) loadData(_lastUrls.p1, _lastUrls.p2, _lastUrls.p3); });
 
     if (DEFAULT_PLANTS_CSV && DEFAULT_FIELDS_CSV && DEFAULT_PIPES_CSV) {
       _lastUrls = { p1: DEFAULT_PLANTS_CSV, p2: DEFAULT_FIELDS_CSV, p3: DEFAULT_PIPES_CSV };
+      loadData(DEFAULT_PLANTS_CSV, DEFAULT_FIELDS_CSV, DEFAULT_PIPES_CSV);
+    };
       loadData(DEFAULT_PLANTS_CSV, DEFAULT_FIELDS_CSV, DEFAULT_PIPES_CSV);
     }
   </script>
