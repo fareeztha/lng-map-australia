@@ -6,7 +6,7 @@ A lightweight interactive map built with **Leaflet.js** and **MarkerCluster**, p
 
 ## 🚀 Live Demo
 
-Deployed on **Vercel** — simply open your the link: https://australia-lng-map.vercel.app
+Deployed on **Vercel** — simply open your the link: https://lng-map-australia.vercel.app
 
 ---
 
