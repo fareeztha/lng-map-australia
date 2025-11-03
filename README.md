@@ -85,7 +85,7 @@ Deployed on **Vercel** — simply open your the link: https://lng-map-australia.
 ### 1️⃣ Fork / Clone this repo
 
 ```bash
-git clone https://github.com/<yourname>/australia-lng-map.git
+git clone https://github.com/<yourname>lng-map-australia.git
 ```
 
 ### 2️⃣ Deploy to Vercel
