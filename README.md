@@ -119,6 +119,12 @@ If you update the Google Sheet:
 
 ## 🧑‍💻 Author
 
-Made by **[Your Name]**
+Made by **Fariz Thufail Afaf**
 For research, data visualization, and energy intelligence purposes.
 Licensed under MIT.
+
+---
+
+## 💬 Acknowledgment
+Special thanks to **Tenaris**, where I worked at the time — for inspiring and pushing me to build this visualization tool that connects engineering data with interactive mapping.
+
